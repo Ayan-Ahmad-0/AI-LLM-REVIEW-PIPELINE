@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Python dependencies first (better layer caching — only reinstalls if this file changes)
+COPY requirements-streamlit.txt /app/requirements-streamlit.txt
+RUN pip install --no-cache-dir -r /app/requirements-streamlit.txt
+
+# Copy the dashboard app code
+COPY src/dashboard /app/dashboard
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0"]

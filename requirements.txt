@@ -1,0 +1,21 @@
+# Kafka
+kafka-python==2.2.2
+
+# Postgres
+psycopg2-binary==2.9.9
+SQLAlchemy==1.4.49
+
+# LLM API client (Claude). Swap/add openai==1.35.0 if you use OpenAI instead/as well.
+anthropic==0.28.0
+
+# Structured output validation for LLM responses (score, category, summary)
+pydantic==2.7.4
+
+# Retry/backoff on rate limits and transient LLM/API failures
+tenacity==8.3.0
+
+# HTTP calls to the live reviews source API
+requests==2.32.3
+
+# Read LLM_API_KEY etc. from a local .env file during development
+python-dotenv==1.0.1
