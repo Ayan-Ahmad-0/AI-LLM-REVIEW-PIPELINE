@@ -5,7 +5,6 @@
 #
 # WARNING: local/dev configuration only. Not production hardened.
 ---
-version: '3'
 x-airflow-common:
   &airflow-common
   build: .
@@ -22,8 +21,9 @@ x-airflow-common:
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
     # App-specific env vars, read by your DAG/task code
     REVIEWS_SOURCE_API_URL: ${REVIEWS_SOURCE_API_URL:-}
-    LLM_API_KEY: ${LLM_API_KEY:-}
-    LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+    PLAYSTORE_API_URL: http://playstore-api:8000
+    BESTBUY_API_KEY: ${BESTBUY_API_KEY:-}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     KAFKA_TOPIC_RAW_REVIEWS: reviews.raw
     APP_DB_CONN: postgresql+psycopg2://app_user:app_password@app-postgres:5432/reviews
@@ -42,6 +42,8 @@ x-airflow-common:
     app-postgres:
       condition: service_healthy
     kafka:
+      condition: service_started
+    playstore-api:
       condition: service_started
 
 services:
@@ -126,6 +128,15 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    restart: always
+
+  # --- Wraps google-play-scraper as a live REST API for the producer to poll ---
+  playstore-api:
+    build:
+      context: ./src/playstore_api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
     restart: always
 
   airflow-webserver:
