@@ -45,6 +45,7 @@ x-airflow-common:
       condition: service_started
     playstore-api:
       condition: service_started
+   
 
 services:
   # --- Airflow's own metadata database (DAG runs, task state, users) ---
@@ -115,6 +116,8 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+       - kafka-data-volume:/var/lib/kafka/data
     restart: always
 
   # --- Web UI to inspect topics/messages during development and demos ---
@@ -139,6 +142,7 @@ services:
       - "8000:8000"
     restart: always
 
+ 
   airflow-webserver:
     <<: *airflow-common
     command: webserver
@@ -279,3 +283,4 @@ services:
 volumes:
   airflow-postgres-volume:
   app-postgres-volume:
+  kafka-data-volume:

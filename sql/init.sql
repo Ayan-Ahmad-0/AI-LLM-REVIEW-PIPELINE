@@ -12,6 +12,7 @@
 CREATE TABLE IF NOT EXISTS raw_reviews (
     review_id           TEXT PRIMARY KEY,        -- stable ID from the source API (or a hash if the source has none)
     product_id          TEXT NOT NULL,
+    app_name            TEXT NOT NULL,           -- display name of the app the review is for, e.g. 'Spotify', 'Instagram'
     review_text         TEXT NOT NULL,
     reviewer_name        TEXT,
     rating              SMALLINT,                -- original star rating from source, if available (1-5), nullable
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS raw_reviews (
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_reviews_product_id ON raw_reviews (product_id);
+CREATE INDEX IF NOT EXISTS idx_raw_reviews_app_name ON raw_reviews (app_name);
 CREATE INDEX IF NOT EXISTS idx_raw_reviews_ingested_at ON raw_reviews (ingested_at);
 
 -- =========================================================
@@ -31,7 +33,7 @@ CREATE TABLE IF NOT EXISTS review_sentiment (
     sentiment_score NUMERIC(4, 3) NOT NULL,       -- e.g. -1.000 to 1.000, or 0.000 to 1.000 — pick one convention and stick to it
     category        TEXT NOT NULL,                -- e.g. 'shipping_complaint', 'product_praise', 'pricing_feedback'
     summary         TEXT NOT NULL,                -- one-line LLM-generated summary
-    model_used      TEXT NOT NULL,                -- e.g. 'claude-sonnet-4-6'
+    model_used      TEXT NOT NULL,                -- e.g. 'gemini-3.1-flash-lite', 'gemini-3.5-flash', 'llama3.2'
     batch_id        TEXT NOT NULL,                -- links back to the batch this was processed in (see llm_usage)
     processed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -65,3 +67,11 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     estimated_cost_usd NUMERIC(10, 6),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- =========================================================
+-- Migration for an EXISTING database (volume already created):
+-- run this manually via psql instead of relying on docker-entrypoint-initdb.d,
+-- which only fires on first-ever container startup.
+-- =========================================================
+-- ALTER TABLE raw_reviews ADD COLUMN IF NOT EXISTS app_name TEXT NOT NULL DEFAULT 'unknown';
+-- CREATE INDEX IF NOT EXISTS idx_raw_reviews_app_name ON raw_reviews (app_name);

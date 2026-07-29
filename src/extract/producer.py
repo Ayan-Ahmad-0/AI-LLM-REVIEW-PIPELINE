@@ -29,12 +29,15 @@ APP_DB_CONN_PARTS = os.environ.get(
     "APP_DB_CONN", "postgresql+psycopg2://app_user:app_password@app-postgres:5432/reviews"
 )
 
-# Apps to pull reviews for — extend this list as needed
-APP_PACKAGE_IDS = [
-    "com.spotify.music",
-    "com.instagram.android",
-    "com.duolingo",
-]
+# Apps to pull reviews for — extend this list as needed.
+# package_id -> display name, attached to every review as app_name before
+# it's published to Kafka, so it's available on raw_reviews without ever
+# having to be inferred/joined back from product_id downstream.
+APP_NAME_MAP = {
+    "com.spotify.music": "Spotify",
+    "com.instagram.android": "Instagram",
+    "com.duolingo": "Duolingo",
+}
 
 REVIEWS_PER_APP = 50
 
@@ -78,8 +81,8 @@ def main():
 
     total_published = 0
 
-    for package_id in APP_PACKAGE_IDS:
-        logger.info("Fetching reviews for %s", package_id)
+    for package_id, app_name in APP_NAME_MAP.items():
+        logger.info("Fetching reviews for %s (%s)", app_name, package_id)
         try:
             fetched = fetch_reviews(package_id)
         except requests.RequestException as e:
@@ -96,6 +99,12 @@ def main():
         )
 
         for review in new_reviews:
+            # Attach app_name here, once, at the point where we actually know
+            # which app this review came from — every downstream consumer
+            # (raw_reviews insert, dashboard) just reads it off the review
+            # dict from here on, no re-derivation from product_id needed.
+            review["app_name"] = app_name
+
             producer.send(
                 KAFKA_TOPIC_RAW_REVIEWS,
                 key=review["review_id"],

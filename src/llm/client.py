@@ -1,102 +1,218 @@
 """
-Wraps the Gemini API call for one batch of reviews.
+src/llm/client.py
 
-NOTE: Using the legacy `google-generativeai` package (not `google-genai`)
-because this project's Airflow image (apache/airflow:2.5.1) is pinned to
-Python 3.9, and `google-genai` requires Python 3.10+. `google-generativeai`
-is deprecated upstream but still installable and functional on 3.9.
-If the Airflow base image is ever upgraded to a 3.10+-compatible version,
-this should be migrated back to `google-genai`.
+LLM client for the review sentiment pipeline. Two-tier fallback chain:
 
-Uses Gemini's structured-output mode (response_schema) to force valid,
-schema-matching JSON directly -- the SDK accepts our pydantic model as the
-schema.
+1. gemini-3.1-flash-lite  (primary — higher free-tier RPD, good enough for
+   classification/extraction/routing-style tasks like this one)
+2. gemini-3.5-flash       (fallback — separate RPD quota bucket; quota is
+   tracked per-model, not account-wide, so Flash-Lite exhausting its quota
+   still leaves Flash available)
 
-We still re-validate with pydantic explicitly (belt-and-suspenders): if
-Gemini's own enforcement ever slips, we still catch it before anything
-reaches Postgres.
+NOTE (2026-07-29): Ollama removed as a last-resort tier for now. If both
+Gemini models exhaust today's quota, analyze_batch() raises
+LLMAllProvidersFailedError and the caller should write the batch to
+failed_batches — there is currently no further fallback. Revisit later if
+this turns out to be a real problem in practice.
 
-Retries with exponential backoff on rate limits / transient errors via tenacity.
+analyze_batch() returns a plain dict (not a dataclass) to match how
+build_batches.process_batch() consumes it:
+    {
+        "results": [ {review_id, sentiment_score, category, summary}, ... ],
+        "input_tokens": int,
+        "output_tokens": int,
+        "model_used": str,   # whichever tier actually served this batch
+    }
+
+Uses the legacy `google-generativeai` SDK (not `google-genai`) because the
+Airflow image is pinned to Python 3.9 and `google-genai` requires 3.10+.
 """
+
 import logging
 import os
 
 import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions
-from pydantic import ValidationError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from pydantic import BaseModel, ValidationError
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-from .prompts import SYSTEM_PROMPT, build_batch_prompt
-from .schema import BatchSentimentResults, GeminiBatchSentimentResults
+from src.llm.prompts import SYSTEM_PROMPT, build_batch_prompt
+from src.llm.schema import BatchSentimentResults
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "gemini-3.5-flash"  # free tier model (gemini-2.5-flash deprecated for new users)
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
+MODEL_NAME_PRIMARY = "gemini-3.1-flash-lite"
+MODEL_NAME_FALLBACK = "gemini-3.5-flash"
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
-_model = genai.GenerativeModel(
-    model_name=MODEL_NAME,
-    system_instruction=SYSTEM_PROMPT,
-)
+
+# ---------------------------------------------------------------------------
+# Constraint-free schema pair for Gemini's response_schema only.
+#
+# The legacy google-generativeai SDK's protobuf-based schema converter
+# doesn't support JSON Schema `minimum`/`maximum` keywords, which
+# pydantic.Field(ge=..., le=...) generates on the strict models in schema.py.
+# These mirror ReviewSentimentResult / BatchSentimentResults field-for-field
+# but with no range/length constraints, purely so the SDK can build a valid
+# protobuf Schema. The strict models are still used afterward to actually
+# validate the response.
+# ---------------------------------------------------------------------------
+
+
+class GeminiReviewSentimentResult(BaseModel):
+    review_id: str
+    sentiment_score: float
+    category: str
+    summary: str
+
+
+class GeminiBatchSentimentResults(BaseModel):
+    results: list[GeminiReviewSentimentResult]
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
 
 
 class LLMValidationError(Exception):
-    """Raised when Gemini's response doesn't match our expected schema."""
+    """Raised when a response fails pydantic validation even after Gemini's
+    own schema enforcement. Carries the raw (malformed) response text so
+    callers can log it to failed_batches.raw_llm_response for debugging."""
 
-    def __init__(self, message: str, raw_response: str):
+    def __init__(self, message: str, raw_response: str = ""):
         super().__init__(message)
         self.raw_response = raw_response
 
 
+class LLMAllProvidersFailedError(Exception):
+    """Raised when both Flash-Lite and Flash have exhausted today's quota.
+    The caller should write the batch to failed_batches."""
+
+
+# ---------------------------------------------------------------------------
+# Error classification
+# ---------------------------------------------------------------------------
+
+_QUOTA_MARKERS = ("429", "quota", "rate limit", "resourceexhausted")
+_TRANSIENT_MARKERS = ("503", "service unavailable", "internal", "deadline exceeded", "500")
+
+
+def is_quota_exhausted(exc: Exception) -> bool:
+    """429 / daily-quota errors — retrying within a short backoff window
+    won't help, since the quota won't reset for hours. Skip straight to the
+    next tier instead of burning retry time."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _QUOTA_MARKERS)
+
+
+def is_transiently_retryable(exc: Exception) -> bool:
+    """503 / transient server errors — genuinely worth a short retry."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_MARKERS)
+
+
+# ---------------------------------------------------------------------------
+# Gemini call, takes model_name as a parameter so the same function serves
+# both the primary and fallback calls.
+# ---------------------------------------------------------------------------
+
+
 @retry(
-    retry=retry_if_exception_type(
-        (google_exceptions.ServerError, google_exceptions.ResourceExhausted, google_exceptions.ServiceUnavailable)
-    ),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    stop=stop_after_attempt(5),
+    retry=retry_if_exception(is_transiently_retryable),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, max=20),
     reraise=True,
 )
-def _call_gemini(prompt: str):
-    return _model.generate_content(
-        prompt,
+def _call_gemini(model_name: str, prompt: str) -> tuple[GeminiBatchSentimentResults, int, int]:
+    """Call a single Gemini model with structured output. Retries a bounded
+    number of times on transient (503-style) errors only — quota errors are
+    not retried here, since is_quota_exhausted() routes those to the caller
+    for fallback handling instead."""
+    model = genai.GenerativeModel(model_name)
+
+    response = model.generate_content(
+        [SYSTEM_PROMPT, prompt],
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
             response_schema=GeminiBatchSentimentResults,
+            max_output_tokens=8192,
         ),
     )
 
+    tokens_in = response.usage_metadata.prompt_token_count
+    tokens_out = response.usage_metadata.candidates_token_count
 
-def analyze_batch(reviews: list[dict]) -> dict:
-    """
-    Send one batch of reviews to Gemini for sentiment analysis.
+    parsed = GeminiBatchSentimentResults.model_validate_json(response.text)
+    return parsed, tokens_in, tokens_out
 
-    Returns a dict:
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+
+def analyze_batch(reviews: list) -> dict:
+    """Run a batch of reviews through the fallback chain:
+    Gemini Flash-Lite -> Gemini Flash.
+
+    Returns:
         {
-            "results": [ReviewSentimentResult, ...],   # validated pydantic objects
+            "results": [ {review_id, sentiment_score, category, summary}, ... ],
             "input_tokens": int,
             "output_tokens": int,
+            "model_used": str,
         }
 
-    Raises LLMValidationError if the response doesn't match the expected schema --
-    caller should catch this and write to failed_batches.
+    Raises:
+        LLMAllProvidersFailedError: both tiers failed (quota exhaustion).
+        LLMValidationError: a response failed pydantic validation.
     """
     prompt = build_batch_prompt(reviews)
-    response = _call_gemini(prompt)
 
-    try:
-        raw_text = response.text
-    except (ValueError, AttributeError) as e:
-        raise LLMValidationError(f"Gemini returned no usable text: {e}", raw_response=str(response)) from None
+    for model_name in (MODEL_NAME_PRIMARY, MODEL_NAME_FALLBACK):
+        try:
+            raw_result, tokens_in, tokens_out = _call_gemini(model_name, prompt)
+        except Exception as exc:
+            if is_quota_exhausted(exc):
+                logger.warning(
+                    "Quota exhausted on %s, trying next tier...", model_name, exc_info=False
+                )
+                continue
+            # Transient errors already retried inside _call_gemini and
+            # re-raised past stop_after_attempt. Surface these directly
+            # rather than falling through the chain, so a real bug on
+            # Flash-Lite doesn't get masked by a "successful" Flash call —
+            # only quota exhaustion routes to the next tier.
+            logger.error("Non-quota error calling %s: %s", model_name, exc)
+            raise
 
-    try:
-        validated = BatchSentimentResults.model_validate_json(raw_text)
-    except ValidationError as e:
-        raise LLMValidationError(str(e), raw_response=raw_text) from e
+        try:
+            validated = BatchSentimentResults.model_validate(raw_result.model_dump())
+        except ValidationError as exc:
+            logger.error("Validation failed for response from %s: %s", model_name, exc)
+            raise LLMValidationError(str(exc), raw_response=raw_result.model_dump_json()) from exc
 
-    usage = response.usage_metadata
-    return {
-        "results": validated.results,
-        "input_tokens": usage.prompt_token_count if usage else 0,
-        "output_tokens": usage.candidates_token_count if usage else 0,
-    }
+        return {
+            # Pydantic objects, not dicts -- upsert_review_sentiment reads
+            # these via attribute access (r.review_id, r.sentiment_score, ...).
+            "results": validated.results,
+            "input_tokens": tokens_in,
+            "output_tokens": tokens_out,
+            "model_used": model_name,
+        }
+
+    # Both Gemini tiers exhausted their quota — no further fallback for now.
+    raise LLMAllProvidersFailedError(
+        f"{MODEL_NAME_PRIMARY} and {MODEL_NAME_FALLBACK} both exhausted today's "
+        f"quota. Batch should be written to failed_batches."
+    )
