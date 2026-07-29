@@ -3,7 +3,7 @@ src/llm/client.py
 
 LLM client for the review sentiment pipeline. Two-tier fallback chain:
 
-1. gemini-3.1-flash-lite  (primary — higher free-tier RPD, good enough for
+1. gemini-3.5-flash-lite  (primary — higher free-tier RPD, good enough for
    classification/extraction/routing-style tasks like this one)
 2. gemini-3.5-flash       (fallback — separate RPD quota bucket; quota is
    tracked per-model, not account-wide, so Flash-Lite exhausting its quota
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # Models
 # ---------------------------------------------------------------------------
 
-MODEL_NAME_PRIMARY = "gemini-3.1-flash-lite"
+MODEL_NAME_PRIMARY = "gemini-3.5-flash-lite"
 MODEL_NAME_FALLBACK = "gemini-3.5-flash"
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
@@ -126,6 +126,8 @@ def is_transiently_retryable(exc: Exception) -> bool:
 # both the primary and fallback calls.
 # ---------------------------------------------------------------------------
 
+MAX_SCHEMA_VALIDATION_ATTEMPTS = 2
+
 
 @retry(
     retry=retry_if_exception(is_transiently_retryable),
@@ -137,23 +139,51 @@ def _call_gemini(model_name: str, prompt: str) -> tuple[GeminiBatchSentimentResu
     """Call a single Gemini model with structured output. Retries a bounded
     number of times on transient (503-style) errors only — quota errors are
     not retried here, since is_quota_exhausted() routes those to the caller
-    for fallback handling instead."""
+    for fallback handling instead.
+
+    Separately: response_schema enforcement on the legacy SDK is best-effort,
+    not a hard guarantee -- observed to occasionally omit a required field
+    (e.g. category) from a result even though the pydantic schema has no
+    default for it. This looks intermittent rather than deterministic (most
+    calls succeed with all fields present), so a same-model retry is
+    attempted up to MAX_SCHEMA_VALIDATION_ATTEMPTS times before giving up
+    and raising LLMValidationError with the last raw response attached.
+    """
     model = genai.GenerativeModel(model_name)
 
-    response = model.generate_content(
-        [SYSTEM_PROMPT, prompt],
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=GeminiBatchSentimentResults,
-            max_output_tokens=8192,
-        ),
-    )
+    last_exc = None
+    last_raw_text = ""
 
-    tokens_in = response.usage_metadata.prompt_token_count
-    tokens_out = response.usage_metadata.candidates_token_count
+    for attempt in range(1, MAX_SCHEMA_VALIDATION_ATTEMPTS + 1):
+        response = model.generate_content(
+            [SYSTEM_PROMPT, prompt],
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=GeminiBatchSentimentResults,
+                max_output_tokens=8192,
+            ),
+        )
 
-    parsed = GeminiBatchSentimentResults.model_validate_json(response.text)
-    return parsed, tokens_in, tokens_out
+        tokens_in = response.usage_metadata.prompt_token_count
+        tokens_out = response.usage_metadata.candidates_token_count
+
+        try:
+            parsed = GeminiBatchSentimentResults.model_validate_json(response.text)
+            return parsed, tokens_in, tokens_out
+        except ValidationError as exc:
+            last_exc = exc
+            last_raw_text = response.text
+            logger.warning(
+                "%s omitted a required field on attempt %d/%d, retrying...",
+                model_name, attempt, MAX_SCHEMA_VALIDATION_ATTEMPTS,
+            )
+
+    # Capture the raw response here -- this is the point where response.text
+    # is in scope. Letting this propagate unwrapped meant process_batch's
+    # generic except Exception caught it as "Unexpected error" with an empty
+    # raw_llm_response, losing the one piece of data that actually explains
+    # what Gemini returned instead of a valid category/etc.
+    raise LLMValidationError(str(last_exc), raw_response=last_raw_text) from last_exc
 
 
 # ---------------------------------------------------------------------------

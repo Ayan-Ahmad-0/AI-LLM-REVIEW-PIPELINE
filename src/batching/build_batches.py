@@ -65,8 +65,8 @@ def estimate_tokens(text: str) -> int:
 def insert_raw_review(cur, review: dict) -> None:
     cur.execute(
         """
-        INSERT INTO raw_reviews (review_id, product_id, app_name, review_text, reviewer_name, rating, source, source_posted_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO raw_reviews (review_id, product_id, app_name, review_text, reviewer_name, rating, app_version, likes_count, source, source_posted_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (review_id) DO NOTHING;
         """,
         (
@@ -76,6 +76,8 @@ def insert_raw_review(cur, review: dict) -> None:
             review["review_text"],
             review.get("reviewer_name"),
             review.get("rating"),
+            review.get("app_version"),
+            review.get("likes_count"),
             review["source"],
             review.get("source_posted_at"),
         ),
@@ -181,7 +183,7 @@ def consume_and_build_backfill_batches() -> list:
             cur.execute(
                 """
                 SELECT r.review_id, r.product_id, r.app_name, r.review_text, r.reviewer_name,
-                       r.rating, r.source, r.source_posted_at
+                       r.rating, r.app_version, r.likes_count, r.source, r.source_posted_at
                 FROM raw_reviews r
                 LEFT JOIN review_sentiment s ON r.review_id = s.review_id
                 WHERE s.review_id IS NULL
@@ -189,8 +191,8 @@ def consume_and_build_backfill_batches() -> list:
                 """
             )
             columns = [
-                "review_id", "product_id", "app_name", "review_text",
-                "reviewer_name", "rating", "source", "source_posted_at",
+                "review_id", "product_id", "app_name", "review_text", "reviewer_name",
+                "rating", "app_version", "likes_count", "source", "source_posted_at",
             ]
             unscored_reviews = [dict(zip(columns, row)) for row in cur.fetchall()]
     finally:

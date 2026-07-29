@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS raw_reviews (
     review_text         TEXT NOT NULL,
     reviewer_name        TEXT,
     rating              SMALLINT,                -- original star rating from source, if available (1-5), nullable
+    app_version         TEXT,                    -- NEW
+    likes_count         INTEGER,                 -- NEW
     source               TEXT NOT NULL,           -- e.g. 'best_buy', 'play_store', 'reddit'
     source_posted_at     TIMESTAMPTZ,             -- when the review was actually posted, per the source
     ingested_at          TIMESTAMPTZ NOT NULL DEFAULT now()  -- when our producer picked it up

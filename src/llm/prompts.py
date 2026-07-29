@@ -1,7 +1,7 @@
 """
 System prompt + user-prompt builder for the sentiment analysis LLM call.
 Structured output is enforced via Gemini's response_schema (see client.py),
-not a tool-use schema — this file only holds the prompt text itself.
+not a tool-use schema -- this file only holds the prompt text itself.
 """
 
 SYSTEM_PROMPT = (
@@ -13,9 +13,14 @@ SYSTEM_PROMPT = (
     "'general_complaint') placed ONLY in the category field.\n"
     "summary must be one concise plain-English sentence under 300 characters describing "
     "what the reviewer actually said. The summary must NEVER contain the word 'category', "
-    "a colon-separated label, or any snake_case tag — categorization belongs exclusively "
-    "in the category field, never appended to or mentioned within the summary text.\n"
-    "Be consistent in category naming across reviews in the same batch."
+    "a colon-separated label, any snake_case tag, or any code, variable names, or "
+    "programming syntax of any kind -- categorization belongs exclusively in the "
+    "category field, never appended to or mentioned within the summary text.\n"
+    "Be consistent in category naming across reviews in the same batch.\n"
+    "Every single result object in your response MUST contain exactly these four keys, "
+    "with no keys omitted and no extra keys added: review_id, sentiment_score, category, "
+    "summary. A response missing the category field on even one result is invalid -- "
+    "double-check every object has all four keys before responding."
 )
 
 

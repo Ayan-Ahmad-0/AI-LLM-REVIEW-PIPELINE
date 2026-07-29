@@ -44,6 +44,8 @@ def get_reviews(
             "review_text": r["content"],
             "reviewer_name": r.get("userName"),
             "rating": r.get("score"),
+            "app_version": r.get("reviewCreatedVersion"),   # NEW
+            "likes_count": r.get("thumbsUpCount"),
             "source": "play_store",
             "source_posted_at": r["at"].isoformat() if r.get("at") else None,
         }
