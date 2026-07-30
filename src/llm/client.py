@@ -80,6 +80,45 @@ class GeminiBatchSentimentResults(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Explicit protobuf Schema sent to Gemini, built by hand instead of via
+# automatic pydantic -> schema conversion.
+#
+# ROOT CAUSE (found 2026-07-29): passing a pydantic BaseModel directly as
+# response_schema (as GeminiBatchSentimentResults was being passed above)
+# does NOT reliably translate each field's "no default value" into a hard
+# `required` constraint in the actual protobuf Schema sent to the model.
+# In production this showed up as Gemini cleanly omitting the `category`
+# key from every result in a batch -- valid JSON, just missing one field,
+# consistently, with no correlation to review content. That's a schema
+# enforcement gap, not the model "going rogue" on certain inputs.
+#
+# Building the Schema explicitly, with an unambiguous required=[...] list
+# on the per-result object, is the real fix -- this is what should have
+# been enforcing the field all along.
+# ---------------------------------------------------------------------------
+
+GEMINI_RESPONSE_SCHEMA = genai.protos.Schema(
+    type=genai.protos.Type.OBJECT,
+    properties={
+        "results": genai.protos.Schema(
+            type=genai.protos.Type.ARRAY,
+            items=genai.protos.Schema(
+                type=genai.protos.Type.OBJECT,
+                properties={
+                    "review_id": genai.protos.Schema(type=genai.protos.Type.STRING),
+                    "sentiment_score": genai.protos.Schema(type=genai.protos.Type.NUMBER),
+                    "category": genai.protos.Schema(type=genai.protos.Type.STRING),
+                    "summary": genai.protos.Schema(type=genai.protos.Type.STRING),
+                },
+                required=["review_id", "sentiment_score", "category", "summary"],
+            ),
+        ),
+    },
+    required=["results"],
+)
+
+
+# ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
 
@@ -159,7 +198,7 @@ def _call_gemini(model_name: str, prompt: str) -> tuple[GeminiBatchSentimentResu
             [SYSTEM_PROMPT, prompt],
             generation_config=genai.GenerationConfig(
                 response_mime_type="application/json",
-                response_schema=GeminiBatchSentimentResults,
+                response_schema=GEMINI_RESPONSE_SCHEMA,
                 max_output_tokens=8192,
             ),
         )
