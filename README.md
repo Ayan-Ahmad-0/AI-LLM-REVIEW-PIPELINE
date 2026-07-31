@@ -58,7 +58,13 @@ This mirrors how companies like Amazon or Shopify sellers monitor product feedba
 - **Containerization:** Docker Compose — separate images for Airflow and the Streamlit dashboard
 
 ---
+## 📊 Dashboard Output
 
+![Streamlit Dashboard](images/dashboard_1.png)
+![Streamlit Dashboard](images/dashboard_2.png)
+
+
+---
 ## 🔄 Pipeline Flow (Airflow DAG)
 
 ```
@@ -87,6 +93,7 @@ Streamlit Dashboard
 ```
 
 Dynamic task mapping means a failure in one batch retries and logs independently — it doesn't fail the whole DAG run. Kafka offsets are only committed after a batch is fully and successfully handled downstream, so a crash mid-batch never silently drops data.
+![Airflow](images/airflow_grid.png)
 
 ---
 
@@ -163,12 +170,8 @@ The pipeline is parameterized via environment variables, so no credentials are h
 
 **Example `.env` variables:**
 ```
-REVIEWS_SOURCE_API_URL=
-LLM_API_KEY=
-LLM_PROVIDER=anthropic
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-KAFKA_TOPIC_RAW_REVIEWS=reviews.raw
-APP_DB_CONN=postgresql+psycopg2://app_user:app_password@app-postgres:5432/reviews
+Gemini_API_KEY= "your api key"
+AIRFLOW_UID=50000
 ```
 
 Airflow's own metadata database and the pipeline's application database are **deliberately kept separate** (`airflow-postgres` vs. `app-postgres`) so pipeline data never mixes with Airflow's internal state.
@@ -208,13 +211,7 @@ docker-compose up --build
 
 ---
 
-## 📊 Sample Output
 
-![Streamlit Dashboard](images/dashboard_1.png)
-![Streamlit Dashboard](images/dashboard_2.png)
-
-
----
 
 ## 🛠️ Future Improvements
 
