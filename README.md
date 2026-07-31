@@ -1,6 +1,6 @@
 # AI/LLM Review Sentiment Pipeline
 
-A real-time, event-driven data pipeline that ingests live product reviews, streams them through Kafka, batches and sends them to an LLM API for structured sentiment analysis, stores validated results in PostgreSQL, and serves them through a Streamlit dashboard — all orchestrated by Apache Airflow.
+A real-time, event-driven data engineering pipeline that ingests live reviews from Instagram, Spotify, and Duolingo via the Google Play API, streams them through Apache Kafka, group them in batches and sends them to an LLM API for structured sentiment analysis, stores validated results in PostgreSQL, and serves them through a Streamlit dashboard — all orchestrated by Apache Airflow.
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-231F20?style=flat&logo=apachekafka&logoColor=white)
