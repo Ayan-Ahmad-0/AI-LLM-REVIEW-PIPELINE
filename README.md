@@ -263,5 +263,3 @@ A few choices worth calling out (the project hit real, non-trivial issues gettin
 MIT — see [LICENSE](LICENSE) for details.
 
 ---
-
-*Built by Ayan as a self-directed portfolio project demonstrating streaming ingestion, LLM-in-the-pipeline design, and container orchestration.*
