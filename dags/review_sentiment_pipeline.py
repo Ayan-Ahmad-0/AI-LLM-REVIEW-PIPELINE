@@ -52,7 +52,7 @@ default_args = {
 @dag(
     dag_id="review_sentiment_pipeline",
     description="Poll Play Store reviews -> Kafka -> batch -> LLM sentiment -> Postgres",
-    schedule_interval="@hourly",
+    schedule_interval="0 */2 * * *",
     start_date=datetime(2026, 7, 1),
     catchup=False,
     max_active_runs=1,

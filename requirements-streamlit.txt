@@ -3,3 +3,6 @@ pandas==2.2.2
 psycopg2-binary==2.9.9
 SQLAlchemy==2.0.30
 plotly==5.22.0
+wordcloud>=1.9.3
+pillow>=10.2.0
+streamlit-option-menu>=0.3.12
