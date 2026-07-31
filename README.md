@@ -201,12 +201,10 @@ docker-compose up --build
 
 ---
 
-## 🚧 Engineering Challenges Solved
+## 🚧 Challenges Solved
 
 - Diagnosed an `airflow-init` crash loop caused by a `SQLAlchemy 2.0.x` pin — Airflow 2.5.1 requires `SQLAlchemy 1.4.x` since 2.0 removed the `executemany_mode='values'` option Airflow's ORM setup still passes. Fixed by pinning `SQLAlchemy==1.4.49` in the Airflow container only, leaving the Streamlit image (a separate, unconstrained container) on `2.0.30`
-- Resolved Docker build failures caused by misspelled dependency files (`requirments.txt`) and a missing `Dockerfile.streamlit`
 - Kept Airflow's metadata database and the pipeline's application database fully isolated (`airflow-postgres` vs. `app-postgres` on a separate port) to prevent state from mixing
-- Designed manual Kafka offset commits so a batch is only marked "consumed" after it's fully written downstream — no silent data loss on a mid-batch crash
 - Built dynamic per-batch task mapping in Airflow so one bad batch retries and fails in isolation, without taking down the whole DAG run
 
 ---
