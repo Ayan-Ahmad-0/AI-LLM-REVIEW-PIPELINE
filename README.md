@@ -1,265 +1,221 @@
-# 📊 AI/LLM Review Sentiment Pipeline
+# AI/LLM Review Sentiment Pipeline
 
-An end-to-end, containerized data engineering pipeline that scrapes real Google Play Store reviews, streams them through Kafka, runs them through a Gemini LLM for sentiment/category/summary extraction, validates the output with Pydantic, lands it in Postgres, and visualizes it in a live Streamlit dashboard — all orchestrated by Airflow.
+A real-time, event-driven data pipeline that ingests live product reviews, streams them through Kafka, batches and sends them to an LLM API for structured sentiment analysis, stores validated results in PostgreSQL, and serves them through a Streamlit dashboard — all orchestrated by Apache Airflow.
 
-Built as a portfolio project to demonstrate practical, production-style data engineering: streaming ingestion, idempotent batch processing, LLM-in-the-pipeline patterns, schema validation/dead-lettering, and container orchestration — not just a notebook demo.
-
-<p align="left">
-  <img src="https://img.shields.io/badge/python-3.9-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.9"/>
-  <img src="https://img.shields.io/badge/docker-compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose"/>
-  <img src="https://img.shields.io/badge/apache%20airflow-2.5.1-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white" alt="Apache Airflow"/>
-  <img src="https://img.shields.io/badge/apache%20kafka-streaming-231F20?style=for-the-badge&logo=apachekafka&logoColor=white" alt="Apache Kafka"/>
-  <img src="https://img.shields.io/badge/postgresql-database-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL"/>
-  <img src="https://img.shields.io/badge/fastapi-service-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI"/>
-  <img src="https://img.shields.io/badge/streamlit-dashboard-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Streamlit"/>
-  <img src="https://img.shields.io/badge/gemini-LLM-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white" alt="Google Gemini"/>
-  <img src="https://img.shields.io/badge/pydantic-validated-E92063?style=for-the-badge&logo=pydantic&logoColor=white" alt="Pydantic"/>
-  <img src="https://img.shields.io/badge/status-active%20development-yellow?style=for-the-badge" alt="Status"/>
-  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="License MIT"/>
-</p>
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-231F20?style=flat&logo=apachekafka&logoColor=white)
+![Apache Airflow](https://img.shields.io/badge/Apache%20Airflow-017CEE?style=flat&logo=apacheairflow&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat&logo=postgresql&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=streamlit&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker%20Compose-2496ED?style=flat&logo=docker&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat&logo=redis&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=flat&logo=pydantic&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00?style=flat&logo=python&logoColor=white)
 
 ---
 
-## Table of Contents
+## 📋 Overview
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Data Model](#data-model)
-- [Pipeline Stages](#pipeline-stages)
-- [Getting Started](#getting-started)
-- [Running the Pipeline](#running-the-pipeline)
-- [Dashboard](#dashboard)
-- [Design Decisions & Lessons Learned](#design-decisions--lessons-learned)
-- [Roadmap](#roadmap)
-- [License](#license)
+This pipeline automatically:
+1. Polls live 3 apps reviews using playstore api and publishes each incoming review to a Kafka topic (`reviews.raw`)
+2. **Batches** reviews by token count (not just review count) via a Kafka consumer with manual offset commits
+3. Sends each batch to an **LLM API** (Gemini) using structured output mode to extract a sentiment score, category, and one-line summary
+4. **Validates** the LLM's output against a pydantic schema — failures are routed to a `failed_batches` table instead of being dropped silently
+5. **Upserts** validated results into PostgreSQL, idempotently keyed on `review_id`
+6. Serves the results through a **Streamlit dashboard** (trend charts, category breakdown, worst-scoring products)
+7. Is fully orchestrated end-to-end by **Apache Airflow** (scheduled polling, dynamic per-batch task mapping, retries, alerting)
+
+This mirrors how companies like Amazon or Shopify sellers monitor product feedback at scale — auto-scoring thousands of reviews for sentiment and urgent complaints instead of reading them by hand. The same pattern applies to support-ticket triage, app-store review monitoring, and social/brand sentiment tracking.
 
 ---
 
-## Overview
+## 🏗️ Architecture
 
-This pipeline continuously ingests reviews for three mobile apps — **Spotify**, **Instagram**, and **Duolingo** — from the Google Play Store, and turns raw star-rated text reviews into structured sentiment intelligence:
+**Live Reviews API** → **Producer (Kafka)** → **Consumer (Batching)** → **LLM API** → **Validation Gate** → **PostgreSQL** → **Streamlit Dashboard**
 
-- 🔍 **Sentiment score** (-1.0 to +1.0)
-- 🏷️ **Category** (e.g. `ad_complaint`, `feature_praise`, `general_praise`)
-- 📝 **One-line LLM-generated summary**
+| Stage | Purpose | Format | Storage |
+|---|---|---|---|
+| **Raw ingestion** | Live reviews published to Kafka as they arrive | JSON | Kafka topic (`reviews.raw`) |
+| **Batching** | Token-aware grouping, manual offset commits | JSON batches | In-memory (Kafka consumer) |
+| **Sentiment (derived)** | LLM-scored, schema-validated results | Structured rows | PostgreSQL (`review_sentiment`) |
+| **Failed validation** | Batches that failed the pydantic schema check | Structured rows | PostgreSQL (`failed_batches`) |
 
-No source API keys or paid signups required — reviews are pulled via a lightweight scraper wrapped behind a FastAPI service, so the rest of the pipeline treats it like any other REST data source.
+### Architecture Diagram
 
-## Architecture
+See the Mermaid diagram below — paste it into the [Mermaid Live Editor](https://mermaid.live) to render and export it as an image for this section.
 
-```mermaid
-flowchart TB
-    subgraph SRC["Source"]
-        PS["Google Play Store<br/>(Spotify · Instagram · Duolingo)"]
-    end
+### Tech Stack
 
-    subgraph ING["Ingestion"]
-        API["FastAPI wrapper<br/>(google-play-scraper)"]
-        PROD["Kafka Producer<br/>dedup vs raw_reviews"]
-    end
+- **Ingestion:** Producer service polling a live reviews API, publishing to **Apache Kafka**
+- **Streaming/Queueing:** Kafka + Zookeeper (with **kafka-ui** for visual topic inspection during development)
+- **Batching & Processing:** Kafka consumer, token-count-aware batching, manual offset commits (only after a successful downstream write)
+- **AI/LLM:** Claude/OpenAI API in structured-output mode for sentiment score, category, and summary
+- **Validation:** Pydantic schema checks before any write to PostgreSQL
+- **Storage:** PostgreSQL — a **dedicated app database** (`reviews`) fully separate from Airflow's own metadata database
+- **Orchestration:** Apache Airflow (CeleryExecutor), dynamic task mapping (one task per batch), retries with `tenacity` backoff, alerting on task failure
+- **Dashboard:** Streamlit, reading directly from PostgreSQL (no dependency on Airflow)
+- **Containerization:** Docker Compose — separate images for Airflow and the Streamlit dashboard
 
-    subgraph STREAM["Streaming"]
-        TOPIC[("Kafka topic<br/>reviews.raw")]
-    end
+---
 
-    subgraph PROC["Processing"]
-        CONS["Consumer / Batcher<br/>token-aware batching"]
-        RAW[("Postgres<br/>raw_reviews")]
-    end
+## 🔄 Pipeline Flow (Airflow DAG)
 
-    subgraph AI["LLM Layer"]
-        LLM["Gemini LLM<br/>structured output"]
-        VAL["Pydantic validation<br/>(strict schema)"]
-    end
-
-    subgraph STORE["Storage"]
-        SENT[("review_sentiment")]
-        FAIL[("failed_batches")]
-        USAGE[("llm_usage")]
-    end
-
-    subgraph ORCH["Orchestration"]
-        AF["Airflow DAG<br/>(Celery executor)"]
-    end
-
-    subgraph VIZ["Presentation"]
-        ST["Streamlit Dashboard"]
-    end
-
-    PS --> API --> PROD --> TOPIC --> CONS
-    CONS -->|"insert (idempotent)"| RAW
-    CONS --> LLM --> VAL
-    VAL -->|"valid"| SENT
-    VAL -->|"invalid / missing"| FAIL
-    LLM -->|"token usage"| USAGE
-
-    AF -.orchestrates.-> PROD
-    AF -.orchestrates.-> CONS
-    AF -.orchestrates.-> LLM
-
-    SENT --> ST
-    USAGE --> ST
-    FAIL --> ST
+```
+extract (poll live API, publish to Kafka)
+        │
+        ▼
+build_batches (Kafka consumer, token-aware batching)
+        │
+        ▼
+call_llm (dynamic task mapping — one task per batch)
+        │
+        ▼
+validate (pydantic schema check)
+        │
+   ┌────┴────┐
+ (pass)     (fail)
+   │           │
+   ▼           ▼
+ upsert    failed_batches
+   │
+   ▼
+review_sentiment (PostgreSQL)
+   │
+   ▼
+Streamlit Dashboard
 ```
 
-**Flow in words:** the producer polls the Play Store wrapper, skips reviews it's already seen, and publishes new ones to Kafka → the consumer inserts each review into `raw_reviews` (idempotent, `ON CONFLICT DO NOTHING`) and groups them into token-bounded batches → each batch goes to Gemini for structured sentiment extraction → results are validated with Pydantic and split into `review_sentiment` (success) or `failed_batches` (schema failures / missing reviews) → token usage is logged to `llm_usage` → Streamlit reads directly from Postgres to render the live dashboard → Airflow schedules and retries the producer, consumer, and LLM steps as a DAG.
+Dynamic task mapping means a failure in one batch retries and logs independently — it doesn't fail the whole DAG run. Kafka offsets are only committed after a batch is fully and successfully handled downstream, so a crash mid-batch never silently drops data.
 
-## Tech Stack
+---
 
-| Layer | Technology | Why |
-|---|---|---|
-| Orchestration | Apache Airflow 2.5.1 (Celery executor) | Scheduled, retryable, dynamically-mapped batch processing |
-| Streaming | Apache Kafka | Decouples ingestion from processing; replayable, durable |
-| Ingestion API | FastAPI + `google-play-scraper` | No signup/API key required; normal REST semantics |
-| Database | PostgreSQL | Landing zone, sentiment store, dead-letter table, usage ledger |
-| LLM | Google Gemini (`google-generativeai`, free tier) | Structured output support; no billing required |
-| Validation | Pydantic v2 | Schema enforcement independent of what the LLM actually returns |
-| Retry logic | Tenacity | Exponential backoff on transient LLM/API errors |
-| Dashboard | Streamlit | Fast, Python-native visualization directly on Postgres |
-| Containerization | Docker Compose | Reproducible multi-service local environment |
+## 🗂️ Database Tables
 
-## Project Structure
+| Table | Description |
+|---|---|
+| `raw_reviews` | Immutable raw review text and metadata (`product_id`, `review_text`, `source_fetched_at`) |
+| `review_sentiment` | LLM-derived results — score, category, summary, model used, processed timestamp — upserted keyed on `review_id` |
+| `failed_batches` | Batches that failed pydantic validation, kept for inspection instead of being dropped |
+| `llm_usage` | Token usage per batch, for cost tracking |
+
+---
+
+## ✅ Data Validation & Reliability
+
+Before a batch's results are written to `review_sentiment`, they pass through:
+
+- **Structured output enforcement** — the LLM is called in structured/tool-use mode rather than free-text parsing
+- **Schema validation** — every field (score, category, summary) is checked against a pydantic model
+- **Idempotent upserts** — keyed on `review_id`, so reruns never create duplicates
+- **Retry with backoff** — `tenacity`-based exponential backoff on LLM rate limits
+- **Cost tracking** — tokens per batch logged to `llm_usage`
+- **Caching** — review text is hashed so already-scored reviews aren't re-sent to the LLM on reruns
+
+If a batch fails validation, the pipeline logs it to `failed_batches` rather than dropping it or crashing the run.
+
+---
+
+## 📁 Repository Structure
 
 ```
 ai-llm-review-pipeline/
+├── README.md
 ├── docker-compose.yml
-├── .env.example
-├── sql/
-│   └── init.sql                  # raw_reviews, review_sentiment, failed_batches, llm_usage
+├── Dockerfile                       # Airflow image
+├── Dockerfile.streamlit             # Dashboard image
+├── requirements.txt                 # Airflow container deps
+├── requirements-streamlit.txt       # Dashboard deps
+├── .env.example                     # LLM_API_KEY, REVIEWS_SOURCE_API_URL, etc.
+│
 ├── dags/
-│   └── review_sentiment_pipeline.py   # Airflow DAG: producer → consumer/batcher → LLM
+│   └── review_sentiment_pipeline.py # Main Airflow DAG
+│
+├── sql/
+│   └── init.sql                     # raw_reviews, review_sentiment, failed_batches, llm_usage
+│
 ├── src/
-│   ├── playstore_api/            # FastAPI wrapper around google-play-scraper
 │   ├── extract/
-│   │   └── producer.py           # Polls Play Store, dedups, publishes to Kafka
+│   │   └── producer.py              # Polls live API → publishes to Kafka
 │   ├── batching/
-│   │   └── build_batches.py      # Consumes reviews.raw, inserts + batches by token count
+│   │   └── build_batches.py         # Kafka consumer → token-aware batches
 │   ├── llm/
-│   │   ├── schema.py             # Strict + Gemini-safe Pydantic models
-│   │   ├── prompts.py            # System prompt + batch prompt builder
-│   │   ├── client.py             # Gemini call with structured output + retries
-│   │   └── test_analyze.py       # Standalone LLM smoke test (no Kafka needed)
-│   ├── pipeline/
-│   │   └── process_batches.py    # Wires batches → LLM → validate → Postgres
+│   │   ├── client.py                # Claude/OpenAI wrapper, retries via tenacity
+│   │   ├── prompts.py                # System prompt + instructions
+│   │   └── schema.py                 # Pydantic model: score, category, summary
+│   ├── storage/
+│   │   ├── models.py                 # SQLAlchemy models
+│   │   └── upsert.py                 # Idempotent write logic
 │   └── dashboard/
-│       └── app.py                # Streamlit dashboard
-└── README.md
+│       └── app.py                    # Streamlit dashboard
+│
+└── tests/
+    ├── test_batching.py
+    ├── test_llm_client.py
+    └── test_upsert.py
 ```
 
-## Data Model
+---
 
-| Table | Purpose |
-|---|---|
-| `raw_reviews` | Immutable landing table — every ingested review, deduplicated by `review_id` |
-| `review_sentiment` | One row per successfully analyzed review: score, category, summary, model, batch |
-| `failed_batches` | Dead-letter table — schema validation failures, LLM errors, or reviews the LLM silently dropped |
-| `llm_usage` | One row per processed batch — input/output token counts, model used, review count |
+## ⚙️ Configuration
 
-## Pipeline Stages
+The pipeline is parameterized via environment variables, so no credentials are hardcoded in application code.
 
-| # | Stage | Status |
-|---|---|---|
-| 1 | Environment setup (Docker Compose: Postgres ×2, Kafka, Airflow, Streamlit) | ✅ |
-| 2 | Postgres schema (`raw_reviews`, `review_sentiment`, `failed_batches`, `llm_usage`) | ✅ |
-| 3 | Producer — Play Store scraper → Kafka (`reviews.raw`), with dedup | ✅ |
-| 4 | Consumer/batching — idempotent insert + token-aware batching | ✅ |
-| 5 | LLM integration — Gemini structured output, validated with Pydantic | ✅ |
-| 6 | Wire consumer → LLM → validate → Postgres (`process_batches.py`) | ✅ |
-| 7 | Airflow DAG — scheduled, dynamically-mapped, retryable | ✅ |
-| 8 | Streamlit dashboard — sentiment trends, category breakdown, worst performers | ✅ |
-| 9 | README + polish | ✅ (you're reading it) |
-
-## Getting Started
-
-### Prerequisites
-
-- Docker Desktop (with Docker Compose v2)
-- A free [Google AI Studio](https://aistudio.google.com/) Gemini API key (no credit card required)
-
-### Setup
-
-```bash
-git clone <your-repo-url>
-cd ai-llm-review-pipeline
-
-# copy env template and fill in your Gemini key
-cp .env.example .env
+**Example `.env` variables:**
 ```
-
-Edit `.env`:
-
-```env
-AIRFLOW_UID=50000
-GEMINI_API_KEY=your-real-key-here
-APP_DB_CONN=postgresql+psycopg2://app_user:app_password@app-postgres:5432/reviews
+REVIEWS_SOURCE_API_URL=
+LLM_API_KEY=
+LLM_PROVIDER=anthropic
 KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 KAFKA_TOPIC_RAW_REVIEWS=reviews.raw
+APP_DB_CONN=postgresql+psycopg2://app_user:app_password@app-postgres:5432/reviews
 ```
 
-> ⚠️ Never commit `.env` (or a filled-in `.env.example`) — both are already git-ignored in this repo.
+Airflow's own metadata database and the pipeline's application database are **deliberately kept separate** (`airflow-postgres` vs. `app-postgres`) so pipeline data never mixes with Airflow's internal state.
 
-### Bring the stack up
+---
+
+## 🚀 Getting Started
 
 ```bash
-docker compose up -d --build
+# Clone the repo
+git clone https://github.com/<your-username>/ai-llm-review-pipeline.git
+cd ai-llm-review-pipeline
+
+# Copy and fill in environment variables
+cp .env.example .env
+
+# Build and start everything (Airflow, Kafka, both Postgres instances, Streamlit)
+docker-compose up --build
 ```
-
-This starts: `app-postgres`, Airflow's metadata Postgres, `kafka` (+ Kafka UI), the `airflow-webserver`/`scheduler`/`worker` trio, the `playstore-api` FastAPI service, and `streamlit`.
-
-## Running the Pipeline
-
-**Trigger a full run manually** (producer → consumer/batcher → LLM → Postgres), bypassing the container's Airflow CLI entrypoint:
-
-```bash
-docker compose run --rm --entrypoint bash airflow-worker -c \
-  "cd /opt/airflow && python -m src.extract.producer"
-
-docker compose run --rm --entrypoint bash airflow-worker -c \
-  "cd /opt/airflow && python -m src.pipeline.process_batches"
-```
-
-**Or let Airflow run it on schedule** — open the webserver UI and unpause the DAG:
 
 | Service | URL |
 |---|---|
-| Airflow UI | http://localhost:8080 |
+| Airflow UI | http://localhost:8085 |
 | Kafka UI | http://localhost:8090 |
 | Streamlit Dashboard | http://localhost:8501 |
-
-> ⚠️ Ports above match this project's compose file as configured during development — double-check `docker-compose.yml` if you've changed any host port mappings.
-
-## Dashboard
-
-The Streamlit dashboard reads directly from Postgres and shows:
-
-- Sentiment trend over time, per app
-- Category breakdown (ad complaints, feature praise, bug reports, etc.)
-- Worst-scoring reviews/products, for triage
-- Token usage / batch throughput from `llm_usage`
-
-## Design Decisions & Lessons Learned
-
-A few choices worth calling out (the project hit real, non-trivial issues getting here — this isn't a from-scratch idealized build):
-
-- **Play Store over Best Buy/Reddit** — Best Buy's API blocks free/`.edu` email signups; Reddit would've needed an invented rating + product-id concept. Play Store reviews map onto the schema naturally with zero signup friction.
-- **`google-generativeai` over `google-genai`** — the newer SDK requires Python 3.10+, but the Airflow base image is pinned to 3.9. Used the legacy (deprecated but functional) SDK instead.
-- **Two Pydantic schema variants** — Gemini's legacy SDK converts schemas to protobuf, which doesn't support JSON Schema `minimum`/`maximum`. A constraint-free schema is used only for `response_schema`; the strict schema still validates the real response afterward.
-- **Manual Kafka offset commits, only after the Postgres insert succeeds** — a crash mid-batch just reprocesses safely (the insert is idempotent) instead of silently dropping messages.
-- **Token-based batching, not just review-count batching** — long reviews can't silently blow past the LLM's context window.
-- **Batch-level atomicity in `process_batches.py`** — each batch's sentiment rows + usage row commit together, or the whole batch is logged to `failed_batches`; one bad batch never blocks the rest of the run.
-- **Partial-response detection** — if Gemini returns fewer results than reviews sent, the missing ones are explicitly logged rather than silently vanishing.
-
-## Roadmap
-
-- [ ] Alerting on repeated `failed_batches` growth (Slack/email via Airflow)
-- [ ] Cost tracking in `llm_usage` (estimated USD per batch)
-- [ ] Swap the free-tier scraper source for a second, contrasting data source
-- [ ] CI pipeline to run `test_analyze.py` on every push
-
-## License
-
-MIT — see [LICENSE](LICENSE) for details.
+| App Postgres | `localhost:5433` (db: `reviews`) |
 
 ---
+
+## 🚧 Engineering Challenges Solved
+
+- Diagnosed an `airflow-init` crash loop caused by a `SQLAlchemy 2.0.x` pin — Airflow 2.5.1 requires `SQLAlchemy 1.4.x` since 2.0 removed the `executemany_mode='values'` option Airflow's ORM setup still passes. Fixed by pinning `SQLAlchemy==1.4.49` in the Airflow container only, leaving the Streamlit image (a separate, unconstrained container) on `2.0.30`
+- Resolved Docker build failures caused by misspelled dependency files (`requirments.txt`) and a missing `Dockerfile.streamlit`
+- Kept Airflow's metadata database and the pipeline's application database fully isolated (`airflow-postgres` vs. `app-postgres` on a separate port) to prevent state from mixing
+- Designed manual Kafka offset commits so a batch is only marked "consumed" after it's fully written downstream — no silent data loss on a mid-batch crash
+- Built dynamic per-batch task mapping in Airflow so one bad batch retries and fails in isolation, without taking down the whole DAG run
+
+---
+
+## 📊 Sample Output
+
+*Add dashboard and Airflow DAG graph screenshots here once available.*
+
+---
+
+## 🛠️ Future Improvements
+
+- Add a FastAPI layer in front of PostgreSQL so the dashboard isn't querying the database directly
+- Expand to additional live review sources (Best Buy, Google Play, Reddit)
+- Add automated tests for batching, LLM client, and upsert logic
+- Add raw review lookup by ID as an additional dashboard panel
