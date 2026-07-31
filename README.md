@@ -168,7 +168,8 @@ ai-llm-review-pipeline/
 
 The pipeline is parameterized via environment variables, so no credentials are hardcoded in application code.
 
-**Example `.env` variables:**
+** Create a `.env` file in the project root and add:
+**
 ```
 Gemini_API_KEY= "your api key"
 AIRFLOW_UID=50000
@@ -182,11 +183,12 @@ Airflow's own metadata database and the pipeline's application database are **de
 
 ```bash
 # Clone the repo
-git clone https://github.com/<your-username>/ai-llm-review-pipeline.git
-cd ai-llm-review-pipeline
+git clone https://github.com/Ayan-Ahmad-0/AI-LLM-REVIEW-PIPELINE.git
+cd AI-LLM-REVIEW-PIPELINE
 
-# Copy and fill in environment variables
-cp .env.example .env
+# Create a .env file in the project root
+# Add your GEMINI_API_KEY and AIRFLOW_UID
+
 
 # Build and start everything (Airflow, Kafka, both Postgres instances, Streamlit)
 docker-compose up --build
