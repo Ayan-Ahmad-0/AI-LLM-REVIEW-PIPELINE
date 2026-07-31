@@ -218,6 +218,5 @@ docker-compose up --build
 ## 🛠️ Future Improvements
 
 - Add a FastAPI layer in front of PostgreSQL so the dashboard isn't querying the database directly
-- Expand to additional live review sources (Best Buy, Google Play, Reddit)
+- Expand to additional live review sources (Best Buy, Reddit)
 - Add automated tests for batching, LLM client, and upsert logic
-- Add raw review lookup by ID as an additional dashboard panel
