@@ -156,10 +156,8 @@ ai-llm-review-pipeline/
 │   └── dashboard/
 │       └── app.py                    # Streamlit dashboard
 │
-└── tests/
-    ├── test_batching.py
-    ├── test_llm_client.py
-    └── test_upsert.py
+└── tests
+    
 ```
 
 ---
