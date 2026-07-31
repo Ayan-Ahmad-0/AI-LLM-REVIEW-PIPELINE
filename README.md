@@ -40,9 +40,10 @@ This mirrors how companies like Amazon or Shopify sellers monitor product feedba
 | **Sentiment (derived)** | LLM-scored, schema-validated results | Structured rows | PostgreSQL (`review_sentiment`) |
 | **Failed validation** | Batches that failed the pydantic schema check | Structured rows | PostgreSQL (`failed_batches`) |
 
+
 ### Architecture Diagram
 
-![Architecture Diagram](AI-LLM-REVIEW-PIPELINE/images/architecture_diagram.png)
+![Architecture Diagram](images/architecture_diagram.png)
 
 ### Tech Stack
 
@@ -209,7 +210,9 @@ docker-compose up --build
 
 ## 📊 Sample Output
 
-*Add dashboard and Airflow DAG graph screenshots here once available.*
+![Streamlit Dashboard](images/dashboard_1.png)
+![Streamlit Dashboard](images/dashboard_2.png)
+
 
 ---
 
