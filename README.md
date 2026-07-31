@@ -17,7 +17,7 @@ A real-time, event-driven data pipeline that ingests live product reviews, strea
 ## 📋 Overview
 
 This pipeline automatically:
-1. Polls live 3 apps reviews using playstore api and publishes each incoming review to a Kafka topic (`reviews.raw`)
+1. Polls live reviews from three Google Play apps and publishes each review as a message to the Kafka topic.
 2. **Batches** reviews by token count (not just review count) via a Kafka consumer with manual offset commits
 3. Sends each batch to an **LLM API** (Gemini) using structured output mode to extract a sentiment score, category, and one-line summary
 4. **Validates** the LLM's output against a pydantic schema — failures are routed to a `failed_batches` table instead of being dropped silently
