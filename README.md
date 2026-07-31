@@ -42,7 +42,7 @@ This mirrors how companies like Amazon or Shopify sellers monitor product feedba
 
 ### Architecture Diagram
 
-See the Mermaid diagram below — paste it into the [Mermaid Live Editor](https://mermaid.live) to render and export it as an image for this section.
+![Architecture Diagram](AI-LLM-REVIEW-PIPELINE/images/architecture_diagram.png)
 
 ### Tech Stack
 
