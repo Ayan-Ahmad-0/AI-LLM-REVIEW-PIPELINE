@@ -50,7 +50,7 @@ This mirrors how companies like Amazon or Shopify sellers monitor product feedba
 - **Ingestion:** Producer service polling a live reviews API, publishing to **Apache Kafka**
 - **Streaming/Queueing:** Kafka + Zookeeper (with **kafka-ui** for visual topic inspection during development)
 - **Batching & Processing:** Kafka consumer, token-count-aware batching, manual offset commits (only after a successful downstream write)
-- **AI/LLM:** Claude/OpenAI API in structured-output mode for sentiment score, category, and summary
+- **AI/LLM:** Gemini free tier API in structured-output mode for sentiment score, category, and summary
 - **Validation:** Pydantic schema checks before any write to PostgreSQL
 - **Storage:** PostgreSQL — a **dedicated app database** (`reviews`) fully separate from Airflow's own metadata database
 - **Orchestration:** Apache Airflow (CeleryExecutor), dynamic task mapping (one task per batch), retries with `tenacity` backoff, alerting on task failure
